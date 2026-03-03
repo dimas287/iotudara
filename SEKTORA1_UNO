@@ -1,0 +1,158 @@
+#include <Wire.h>
+#include <Adafruit_AHTX0.h>
+#include <RTClib.h>
+#include <SoftwareSerial.h>
+#include <SD_ZH03B.h>
+
+// ================= SENSOR =================
+Adafruit_AHTX0 aht;
+RTC_DS3231 rtc;
+
+// ZH03B (RX=4, TX=5)
+SoftwareSerial ZHSerial(4, 5);
+SD_ZH03B ZH03B(ZHSerial, SD_ZH03B::SENSOR_ZH03B);
+
+// ================= RTC SETTING =================
+#define SET_RTC_WITA false
+
+const int ledkirim = 3;
+
+// ================= AKUMULASI =================
+unsigned long sampleCount = 0;
+float sumT = 0;
+float sumH = 0;
+unsigned long sumPM25 = 0;
+unsigned long sumPM10 = 0;
+
+int lastPM25 = 0;
+int lastPM10 = 0;
+
+unsigned long lastSend = 0;
+const unsigned long intervalKirim = 60000;
+
+// ================= PRINT TIMESTAMP =================
+void printTimestamp(DateTime now) {
+  Serial.print(now.year());
+  Serial.print("-");
+  if (now.month() < 10) Serial.print("0");
+  Serial.print(now.month());
+  Serial.print("-");
+  if (now.day() < 10) Serial.print("0");
+  Serial.print(now.day());
+  Serial.print("T");
+  if (now.hour() < 10) Serial.print("0");
+  Serial.print(now.hour());
+  Serial.print(":");
+  if (now.minute() < 10) Serial.print("0");
+  Serial.print(now.minute());
+  Serial.print(":");
+  if (now.second() < 10) Serial.print("0");
+  Serial.print(now.second());
+}
+
+void setup() {
+
+  Serial.begin(9600);     // ke ESP32
+  ZHSerial.begin(9600);
+  Wire.begin();
+pinMode(ledkirim, OUTPUT);
+  // Serial.println(F("=== BOOTING UNO ==="));
+
+  if (!rtc.begin()) {
+    Serial.println(F("RTC ERROR"));
+  } else {
+    // Serial.println(F("RTC OK"));
+#if SET_RTC_WITA
+    rtc.adjust(DateTime(2026,3,4,12,0,0));
+#endif
+  }
+
+  if (!aht.begin()) {
+    Serial.println(F("AHT ERROR"));
+  } else {
+    // Serial.println(F("AHT OK"));
+  }
+
+  ZH03B.setMode(SD_ZH03B::IU_MODE);
+  // Serial.println(F("ZH03B OK"));
+
+  lastSend = millis();
+}
+
+void loop() {
+  digitalWrite(ledkirim, LOW);
+  DateTime now = rtc.now();
+
+  // ===== BACA AHT =====
+  sensors_event_t hum, temp;
+  aht.getEvent(&hum, &temp);
+
+  float T = temp.temperature;
+  float H = hum.relative_humidity;
+
+  sumT += T;
+  sumH += H;
+
+  // ===== BACA PM =====
+  if (ZH03B.readData()) {
+    lastPM25 = ZH03B.getPM2_5();
+    lastPM10 = ZH03B.getPM10_0();
+  }
+
+  sumPM25 += lastPM25;
+  sumPM10 += lastPM10;
+
+  sampleCount++;
+
+  // // ===== DEBUG TIAP 1 DETIK =====
+  static unsigned long lastDebug = 0;
+  if (millis() - lastDebug >= 1000) {
+    lastDebug = millis();
+    digitalWrite(ledkirim, HIGH);
+
+  //   Serial.print(F("TS="));
+  //   printTimestamp(now);
+  //   Serial.print(F(" T=")); Serial.print(T);
+  //   Serial.print(F(" H=")); Serial.print(H);
+  //   Serial.print(F(" PM25=")); Serial.print(lastPM25);
+  //   Serial.print(F(" PM10=")); Serial.print(lastPM10);
+  //   Serial.print(F(" Sampel=")); Serial.println(sampleCount);
+  }
+
+  // ===== KIRIM RATA-RATA 1 MENIT =====
+  if (millis() - lastSend >= intervalKirim) {
+
+    lastSend = millis();
+
+    float avgT = sumT / sampleCount;
+    float avgH = sumH / sampleCount;
+    float avgPM25 = sumPM25 / sampleCount;
+    float avgPM10 = sumPM10 / sampleCount;
+
+    // FORMAT: timestamp,temp,hum,pm25,pm10,0,0
+    printTimestamp(now);
+    Serial.print(",");
+    Serial.print(avgT, 2);
+    Serial.print(",");
+    Serial.print(avgH, 2);
+    Serial.print(",");
+    Serial.print(avgPM25, 0);
+    Serial.print(",");
+    Serial.print(avgPM10, 0);
+    Serial.print(",0,0");   // wind speed & dir = 0
+    Serial.println();
+    digitalWrite(ledkirim, HIGH);
+    delay(2000);
+    digitalWrite(ledkirim, LOW);
+    // Serial.println(F("=== RATA2 1 MENIT TERKIRIM ==="));
+
+    // RESET
+    sampleCount = 0;
+    sumT = 0;
+    sumH = 0;
+    sumPM25 = 0;
+    sumPM10 = 0;
+  }
+
+  delay(100);
+}

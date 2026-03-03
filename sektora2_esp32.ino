@@ -16,7 +16,7 @@ WiFiClientSecure espClient;
 PubSubClient client(espClient);
 
 // ================= DEVICE =================
-String deviceID = "SECTOR_A1";
+String deviceID = "SECTOR_A2";
 
 // ================= SERIAL MEGA (UART2 ESP32) =================
 HardwareSerial megaSerial(2);
